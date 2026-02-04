@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Image Labeling Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <div class="page">
+    <div class="container">
+
+      <!-- Header -->
+      <section class="card">
+        <h1 class="title">Image Labeling Dashboard</h1>
+        <p class="subtitle">Ground Truth Annotation Interface for Defect Detection Research</p>
+      </section>
+
+      <!-- Progress -->
+      <section class="card">
+        <div class="progressRow">
+          <span class="progressLabel">Labeling Progress</span>
+          <span class="progressCount" id="progressCount">0 / 0 images labeled</span>
+        </div>
+
+        <div class="progressBar">
+          <div class="progressFill" id="progressFill"></div>
+        </div>
+      </section>
+
+      <!-- Image Information -->
+      <section class="card infoCard">
+        <div class="infoBlock">
+          <p class="infoSmall">Current Image</p>
+          <p class="infoMain" id="fileName">—</p>
+        </div>
+        <div class="infoBlock right">
+          <p class="infoSmall">Position</p>
+          <p class="infoMain" id="positionText">—</p>
+        </div>
+      </section>
+
+      <!-- Image Viewer -->
+      <section class="card viewer">
+        <div class="viewerTop">
+          <img id="img" alt="solar panel image" />
+          <div class="badge hidden" id="badge">
+            <span id="badgeText">—</span>
+          </div>
+        </div>
+
+        <!-- Navigation -->
+        <div class="viewerNav">
+          <button class="btn btnOutline" id="prevBtn" onclick="goPrev()">← Previous</button>
+          <span class="navHint">Use ← → arrow keys to navigate</span>
+          <button class="btn btnOutline" id="nextBtn" onclick="goNext()">Next →</button>
+        </div>
+      </section>
+
+      <!-- Classification -->
+      <section class="card">
+        <h2 class="sectionTitle">Classification</h2>
+
+        <div class="grid2">
+          <button class="btn btnRed" onclick="sendLabel('defect')">Defect (D)</button>
+          <button class="btn btnGreen" onclick="sendLabel('no_defect')">No Defect (N)</button>
+        </div>
+
+        <p class="helpText">
+          Keyboard shortcuts:
+          <kbd>D</kbd> for Defect or <kbd>N</kbd> for No Defect
+        </p>
+      </section>
+
+      <!-- Notes -->
+      <section class="card">
+        <label class="labelTitle" for="notes">Notes (Optional)</label>
+        <p class="helpText left">
+          Record observations such as defect type, uncertainty, or image quality issues
+        </p>
+        <textarea id="notes" placeholder="Enter observations about this image..."></textarea>
+      </section>
+
+      <!-- Export -->
+      <section class="card exportCard">
+        <div>
+          <h2 class="sectionTitle">Export Ground Truth Dataset</h2>
+          <p class="helpText left">Download labels as CSV for model training and evaluation</p>
+        </div>
+        <button class="btn btnBlue" onclick="downloadCSV()" id="exportBtn" disabled>Export CSV</button>
+      </section>
+
+    </div>
+  </div>
+
+<script>
+  const images = {{ images | tojson }};
+  let i = 0;
+
+  // labels saved locally in browser (for UI only). Your server also saves to CSV/Sheets.
+  const labels = {}; // key = filename, value = {label, notes, timestamp}
+
+  function updateProgressUI(){
+    const total = images.length;
+    const labeledCount = Object.keys(labels).length;
+
+    document.getElementById("progressCount").innerText =
+      `${labeledCount} / ${total} images labeled`;
+
+    const pct = total === 0 ? 0 : (labeledCount / total) * 100;
+    document.getElementById("progressFill").style.width = pct + "%";
+
+    // enable export only if there is at least 1 label
+    document.getElementById("exportBtn").disabled = labeledCount === 0;
+  }
+
+  function updateViewerUI(){
+    if (!images || images.length === 0){
+      document.getElementById("fileName").innerText = "No images found.";
+      document.getElementById("positionText").innerText = "";
+      return;
+    }
+
+    const fname = images[i];
+    document.getElementById("img").src = "/images/" + fname;
+    document.getElementById("fileName").innerText = fname;
+    document.getElementById("positionText").innerText = `Image ${i+1} of ${images.length}`;
+
+    // set prev/next disabled
+    document.getElementById("prevBtn").disabled = (i === 0);
+    document.getElementById("nextBtn").disabled = (i === images.length - 1);
+
+    // load notes if exists
+    document.getElementById("notes").value = labels[fname]?.notes || "";
+
+    // badge
+    const badge = document.getElementById("badge");
+    const badgeText = document.getElementById("badgeText");
+    const currentLabel = labels[fname]?.label || null;
+
+    if (!currentLabel){
+      badge.classList.add("hidden");
+      badge.classList.remove("badgeRed", "badgeGreen");
+    } else {
+      badge.classList.remove("hidden");
+      if (currentLabel === "defect"){
+        badge.classList.add("badgeRed");
+        badge.classList.remove("badgeGreen");
+        badgeText.innerText = "Defect";
+      } else {
+        badge.classList.add("badgeGreen");
+        badge.classList.remove("badgeRed");
+        badgeText.innerText = "No Defect";
+      }
+    }
+
+    updateProgressUI();
+  }
+
+  function goPrev(){ if (i > 0){ i--; updateViewerUI(); } }
+  function goNext(){ if (i < images.length - 1){ i++; updateViewerUI(); } }
+
+  function sendLabel(label){
+    const fname = images[i];
+    const notes = document.getElementById("notes").value || "";
+
+    // save to server (CSV or Sheets depending on your backend)
+    fetch("/label", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ image: fname, label: label, notes: notes })
+    });
+
+    // save locally (for badge/progress/export UI)
+    labels[fname] = { label, notes, timestamp: new Date().toISOString() };
+
+    // auto-advance
+    setTimeout(() => {
+      if (i < images.length - 1) {
+        i++;
+        updateViewerUI();
+      } else {
+        updateViewerUI();
+        alert("All images labeled!");
+      }
+    }, 150);
+  }
+
+  function downloadCSV(){
+    const rows = [
+      ["Filename","Label","Notes","Timestamp"]
+    ];
+
+    Object.entries(labels).forEach(([filename, data]) => {
+      const safeNotes = (data.notes || "").replaceAll('"','""');
+      rows.push([filename, data.label, safeNotes, data.timestamp]);
+    });
+
+    const csv = rows.map(r => r.map(v => `"${v}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `solar_panel_labels_${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // Keyboard shortcuts
+  document.addEventListener("keydown", (e) => {
+    const k = e.key;
+    if (e.target && e.target.tagName === "TEXTAREA") return;
+
+    if (k === "d" || k === "D") sendLabel("defect");
+    if (k === "n" || k === "N") sendLabel("no_defect");
+    if (k === "ArrowLeft") goPrev();
+    if (k === "ArrowRight") goNext();
+  });
+
+  updateViewerUI();
+</script>
+
+</body>
+</html>
