@@ -1,14 +1,30 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory, send_file
+from flask import Flask, render_template, request, jsonify, send_from_directory, send_file, session
 import csv, os
 from datetime import datetime
 
 app = Flask(__name__)
 
-IMAGES_DIR = "images"
-LABELS = "labels.csv"
+# مهم للسشن (حطيه في Render كمتغير بيئة SECRET_KEY)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-# ✅ توكن الأدمن من Render Environment Variables
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN")
+IMAGES_DIR = "images"
+LABELS_DIR = "labels"  # مجلد نحط فيه ملفات كل شخص
+
+os.makedirs(LABELS_DIR, exist_ok=True)
+
+
+def get_sid() -> str:
+    """Unique id per browser session"""
+    sid = session.get("sid")
+    if not sid:
+        sid = os.urandom(16).hex()
+        session["sid"] = sid
+    return sid
+
+
+def user_labels_path() -> str:
+    sid = get_sid()
+    return os.path.join(LABELS_DIR, f"labels_{sid}.csv")
 
 
 @app.route("/")
@@ -25,7 +41,9 @@ def images(name):
 @app.route("/label", methods=["POST"])
 def label():
     data = request.json
-    with open(LABELS, "a", newline="", encoding="utf-8") as f:
+    path = user_labels_path()
+
+    with open(path, "a", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([
             data["image"],
             data["label"],
@@ -37,20 +55,16 @@ def label():
 
 @app.route("/export")
 def export():
-    # ✅ حماية: لازم توكن في الرابط
-    token = request.args.get("token")
-    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
-        return jsonify(ok=False, error="Unauthorized"), 401
+    path = user_labels_path()
 
-    # ✅ لو الملف مو موجود أو فاضي
-    if not os.path.exists(LABELS) or os.path.getsize(LABELS) == 0:
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
         return jsonify(ok=False, message="No results to export yet."), 400
 
-    # ✅ تنزيل الملف
-    response = send_file(LABELS, as_attachment=True)
+    # ينزل ملف المستخدم فقط
+    response = send_file(path, as_attachment=True, download_name="labels.csv")
 
-    # ✅ تصفير الملف بعد التحميل
-    open(LABELS, "w", encoding="utf-8").close()
+    # يصفّر ملفه فقط بعد التصدير
+    open(path, "w", encoding="utf-8").close()
 
     return response
 
